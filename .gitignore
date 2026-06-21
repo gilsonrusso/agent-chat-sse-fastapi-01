@@ -1,0 +1,69 @@
+# OS files
+.DS_Store
+Thumbs.db
+db.lock
+
+# IDEs and editors
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.project
+.classpath
+.settings/
+
+# Environment files and secrets
+.env
+.env.local
+.env.*.local
+*.env
+.venv/
+env/
+venv/
+ENV/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Frontend (Node / Vite / React)
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+dist-ssr/
+*.local
+
+# Backend (Python / FastAPI)
+backend/.venv/
+backend/.ruff_cache/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+build/
+develop-eggs/
+downloads/
+eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+.installed.cfg
+*.egg
+manifest
+spec

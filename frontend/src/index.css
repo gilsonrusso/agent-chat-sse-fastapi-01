@@ -1,0 +1,62 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+  --bg-primary: #0a0a0f;
+  --bg-secondary: #111118;
+  --text-primary: #e8e8ed;
+  --text-secondary: #a1a1aa;
+  --text-muted: #52525b;
+  --accent: #6366f1;
+  --accent-hover: #7c3aed;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  height: 100%;
+}
+
+/* Typing Indicator Animation */
+@keyframes typing-pulse {
+  0%, 100% { opacity: 0.2; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+
+.typing-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: currentColor;
+  margin: 0 3px;
+  animation: typing-pulse 1.4s infinite ease-in-out;
+}
+
+.typing-dot:nth-of-type(1) {
+  animation-delay: 0s;
+}
+
+.typing-dot:nth-of-type(2) {
+  animation-delay: 0.2s;
+}
+
+.typing-dot:nth-of-type(3) {
+  animation-delay: 0.4s;
+}
+

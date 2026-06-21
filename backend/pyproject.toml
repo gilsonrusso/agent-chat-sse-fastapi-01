@@ -1,0 +1,66 @@
+[project]
+name = "backend"
+version = "0.1.0"
+description = "Agent Chat SSE FastAPI"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "deepagents>=0.6.11",
+    "fastapi[standard]>=0.136.3",
+    "langchain>=1.3.9",
+    "langchain-google-genai>=4.2.5",
+    "pydantic-settings>=2.14.1",
+    "rich>=15.0.0",
+]
+
+[tool.fastapi]
+entrypoint = "app.main:app"
+
+[tool.setuptools]
+package-dir = {"" = "app"}
+
+[tool.ruff]
+# Configuração base do Ruff
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+# Habilita regras recomendadas
+select = ["E", "F", "I", "N", "UP", "B"]
+# Ignora regras que conflitam com o formatador Ruff (recomendação oficial)
+ignore = [
+    "E501",   # line-too-long (o formatador já cuida disso)
+    "W191",   # tab-indentation
+    "E111",   # indentation-with-invalid-multiple
+    "E114",   # indentation-with-invalid-multiple-comment
+    "E117",   # over-indented
+    "D206",   # docstring-tab-indentation
+    "D300",   # triple-single-quotes
+    "Q000",   # bad-quotes-inline-string
+    "Q001",   # bad-quotes-multiline-string
+    "Q002",   # bad-quotes-docstring
+    "Q003",   # avoidable-escaped-quote
+    "Q004",   # unnecessary-escaped-quote
+    "COM812", # missing-trailing-comma
+    "COM819", # prohibited-trailing-comma
+    "ISC002", # multi-line-implicit-string-concatenation
+]
+
+[tool.ruff.lint.isort]
+# Ordenação de imports compatível com o formatador
+known-first-party = ["backend"]
+
+[tool.ruff.format]
+# Configurações de formatação (estilo Black)
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+docstring-code-line-length = "dynamic"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.17",
+]
+
