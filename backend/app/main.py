@@ -1,21 +1,28 @@
 from collections.abc import AsyncIterable
 import json
 from typing import Any
+from uuid import uuid4
 
 from deepagents import create_deep_agent
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from langchain.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from app.core.llm import get_llm
 from app.core.logger import logger
+from app.db import crud, schemas
+from app.db.database import Base, SessionLocal, engine
+from app.db.deps import get_db
+
+# Criar tabelas no banco de dados na inicialização
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
-
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,6 +31,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # --- Tools ---
 
@@ -78,11 +86,12 @@ class DecisionItem(BaseModel):
 
 class ChatPayload(BaseModel):
     thread_id: str
+    user_id: str = "default_user"
     text: str | None = None
     decisions: list[DecisionItem] | None = None
 
 
-# --- Event LifeCycle
+# --- Event LifeCycle ---
 
 
 @app.on_event("startup")
@@ -100,56 +109,121 @@ async def shutdown_event():
 
 @app.post("/chat/stream", response_class=EventSourceResponse)
 async def stream_chat(payload: ChatPayload) -> AsyncIterable[ServerSentEvent]:
-
     config = {"configurable": {"thread_id": payload.thread_id}}
+    db: Session = SessionLocal()
 
-    yield ServerSentEvent(raw_data="[START]", event="lifecycle_start")
+    try:
+        yield ServerSentEvent(raw_data="[START]", event="lifecycle_start")
 
-    # 1. Definir o input dependendo se é uma nova mensagem ou retoma de interrupção
-    if payload.decisions is not None:
-        decisions_list = [d.dict(exclude_none=True) for d in payload.decisions]
-        inputs = Command(resume={"decisions": decisions_list})
-    elif payload.text is not None:
-        inputs = {"messages": [{"role": "user", "content": payload.text}]}
-    else:
-        yield ServerSentEvent(raw_data="Payload inválido: informe 'text' ou 'decisions'", event="error")
-        yield ServerSentEvent(raw_data="[DONE]", event="lifecycle_end")
-        return
+        # 1. Definir o input dependendo se é uma nova mensagem ou retoma de interrupção
+        if payload.decisions is not None:
+            decisions_list = [
+                d.model_dump(exclude_none=True) for d in payload.decisions
+            ]
+            inputs = Command(resume={"decisions": decisions_list})
+        elif payload.text is not None:
+            inputs = {"messages": [{"role": "user", "content": payload.text}]}
 
-    # 2. Executar o streaming de eventos
-    async for event in agent.astream_events(
-        inputs,
-        config=config,
-        version="v2",
-    ):
-        kind = event.get("event")
-        logger.info(f"event Kind: {kind}")
-        logger.info(f"event Config: {config}")
+            # Persistir thread e mensagem do usuário no banco
+            title = (
+                payload.text[:30] + "..." if len(payload.text) > 30 else payload.text
+            )
+            crud.get_or_create_thread(
+                db,
+                thread_id=payload.thread_id,
+                user_id=payload.user_id,
+                title=title,
+            )
+            crud.create_chat_message(
+                db,
+                schemas.MessageCreate(
+                    id=str(uuid4()),
+                    thread_id=payload.thread_id,
+                    role="user",
+                    content=payload.text,
+                ),
+            )
+        else:
+            yield ServerSentEvent(
+                raw_data="Payload inválido: informe 'text' ou 'decisions'",
+                event="error",
+            )
+            yield ServerSentEvent(raw_data="[DONE]", event="lifecycle_end")
+            return
 
-        # Stream text tokens from the model
-        if kind == "on_chat_model_stream":
-            chunk = event.get("data", {}).get("chunk")
-            logger.info(f"Chunk: {chunk}")
-            if (
-                chunk
-                and hasattr(chunk, "content")
-                and isinstance(chunk.content, str)
-                and chunk.content
-            ):
-                yield ServerSentEvent(raw_data=chunk.content, event="message")
+        assistant_content = ""
 
-        # Notify when a tool is called
-        elif kind == "on_tool_start":
-            yield ServerSentEvent(raw_data=event.get("name", ""), event="tool_start")
+        # 2. Executar o streaming de eventos
+        async for event in agent.astream_events(
+            inputs,
+            config=config,
+            version="v2",
+        ):
+            kind = event.get("event")
+            logger.info(f"event Kind: {kind}")
+            logger.info(f"event Config: {config}")
 
-        # Notify when a tool finishes
-        elif kind == "on_tool_end":
-            yield ServerSentEvent(raw_data=event.get("name", ""), event="tool_end")
+            # Stream text tokens from the model
+            if kind == "on_chat_model_stream":
+                chunk = event.get("data", {}).get("chunk")
+                logger.info(f"Chunk: {chunk}")
+                if (
+                    chunk
+                    and hasattr(chunk, "content")
+                    and isinstance(chunk.content, str)
+                    and chunk.content
+                ):
+                    assistant_content += chunk.content
+                    yield ServerSentEvent(raw_data=chunk.content, event="message")
 
-    # 3. Verificar se o agente parou em uma interrupção de HITL
-    state = await agent.aget_state(config)
-    if state.tasks and state.tasks[0].interrupts:
-        interrupt_value = state.tasks[0].interrupts[0].value
-        yield ServerSentEvent(raw_data=json.dumps(interrupt_value), event="interrupt")
-    else:
-        yield ServerSentEvent(raw_data="[DONE]", event="lifecycle_end")
+            # Notify when a tool is called
+            elif kind == "on_tool_start":
+                yield ServerSentEvent(
+                    raw_data=event.get("name", ""), event="tool_start"
+                )
+
+            # Notify when a tool finishes
+            elif kind == "on_tool_end":
+                yield ServerSentEvent(raw_data=event.get("name", ""), event="tool_end")
+
+        # Persistir a resposta completa do assistente no banco
+        if assistant_content:
+            crud.create_chat_message(
+                db,
+                schemas.MessageCreate(
+                    id=str(uuid4()),
+                    thread_id=payload.thread_id,
+                    role="assistant",
+                    content=assistant_content,
+                ),
+            )
+
+        # 3. Verificar se o agente parou em uma interrupção de HITL
+        state = await agent.aget_state(config)
+        if state.tasks and state.tasks[0].interrupts:
+            interrupt_value = state.tasks[0].interrupts[0].value
+            yield ServerSentEvent(
+                raw_data=json.dumps(interrupt_value), event="interrupt"
+            )
+        else:
+            yield ServerSentEvent(raw_data="[DONE]", event="lifecycle_end")
+    finally:
+        db.close()
+
+
+@app.get("/users/{user_id}/threads", response_model=list[schemas.ThreadResponse])
+def read_user_threads(user_id: str, db: Session = Depends(get_db)):
+    return crud.get_user_threads(db, user_id=user_id)
+
+
+@app.get("/threads/{thread_id}/messages", response_model=list[schemas.MessageResponse])
+def read_thread_messages(thread_id: str, db: Session = Depends(get_db)):
+    return crud.get_thread_messages(db, thread_id=thread_id)
+
+
+@app.delete("/threads/{thread_id}")
+def delete_thread_endpoint(thread_id: str, db: Session = Depends(get_db)):
+    success = crud.delete_thread(db, thread_id=thread_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Thread não encontrada")
+    return {"status": "ok", "message": "Thread deletada com sucesso"}

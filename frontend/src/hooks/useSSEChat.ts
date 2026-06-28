@@ -17,6 +17,7 @@ export interface ToolEvent {
 
 export interface ActionRequest {
   name: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   args: any;
   id?: string;
 }
@@ -36,6 +37,7 @@ export interface DecisionItem {
   message?: string;
   edited_action?: {
     name: string;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     args: any;
   };
 }
@@ -50,9 +52,11 @@ interface UseSSEChatReturn {
   activeTools: ToolEvent[];
   error: string | null;
   pendingInterrupt: PendingInterrupt | null;
+  threadId: string;
   sendMessage: (text: string) => void;
   sendDecision: (decisions: DecisionItem[]) => void;
   clearMessages: () => void;
+  loadThread: (selectedThreadId: string) => Promise<void>;
   abort: () => void;
 }
 
@@ -290,6 +294,36 @@ export function useSSEChat(options: UseSSEChatOptions = {}): UseSSEChatReturn {
     setThreadId(generateId());
   }, []);
 
+  const loadThread = useCallback(
+    async (selectedThreadId: string) => {
+      if (isStreaming) return;
+      setError(null);
+      setPendingInterrupt(null);
+      setActiveTools([]);
+      try {
+        const baseUrl = apiUrl.replace(/\/chat\/stream$/, "");
+        const res = await fetch(`${baseUrl}/threads/${selectedThreadId}/messages`);
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        }
+        const data = await res.json();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const loadedMessages: ChatMessage[] = data.map((msg: any) => ({
+          id: msg.id,
+          role: msg.role as "user" | "assistant",
+          content: msg.content,
+          timestamp: new Date(msg.created_at),
+        }));
+        setThreadId(selectedThreadId);
+        setMessages(loadedMessages);
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : "Erro ao carregar mensagens";
+        setError(errorMsg);
+      }
+    },
+    [apiUrl, isStreaming]
+  );
+
   const abort = useCallback(() => {
     abortControllerRef.current?.abort();
   }, []);
@@ -300,9 +334,11 @@ export function useSSEChat(options: UseSSEChatOptions = {}): UseSSEChatReturn {
     activeTools,
     error,
     pendingInterrupt,
+    threadId,
     sendMessage,
     sendDecision,
     clearMessages,
+    loadThread,
     abort,
   };
 }
