@@ -12,10 +12,11 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str
     GEMINI_MODEL: str = "gemini-2.5-flash"
 
-    # Server
+    # Server & Database
     HOST: str = "localhost"
     PORT: int = 8000
     DEBUG: bool = True
+    DATABASE_URL: str = "sqlite:///./sql_app.db"
 
 
 # Instância global de configurações
