@@ -34,23 +34,21 @@ interface ThreadSidebarProps {
   currentThreadId: string;
   onSelectThread: (threadId: string) => void;
   onNewChat: () => void;
-  apiUrl?: string;
   mobileOpen: boolean;
   onMobileClose: () => void;
   drawerWidth?: number;
   isStreaming?: boolean;
 }
 
-export const ThreadSidebar: React.FC<ThreadSidebarProps> = ({
+export const ThreadSidebar = ({
   currentThreadId,
   onSelectThread,
   onNewChat,
-  apiUrl = 'http://localhost:8000/chat/stream',
   mobileOpen,
   onMobileClose,
   drawerWidth = 280,
   isStreaming = false,
-}) => {
+}: ThreadSidebarProps) => {
   const [threads, setThreads] = useState<ThreadItem[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
