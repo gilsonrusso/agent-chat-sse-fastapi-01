@@ -1,4 +1,5 @@
 import datetime
+
 from sqlalchemy.orm import Session
 
 from app.db import models, schemas
@@ -13,9 +14,7 @@ def get_or_create_thread(
         .first()
     )
     if not db_thread:
-        db_thread = models.ChatThreadModel(
-            id=thread_id, user_id=user_id, title=title
-        )
+        db_thread = models.ChatThreadModel(id=thread_id, user_id=user_id, title=title)
         db.add(db_thread)
         db.commit()
         db.refresh(db_thread)
@@ -35,9 +34,7 @@ def get_user_threads(
     )
 
 
-def get_thread_messages(
-    db: Session, thread_id: str
-) -> list[models.ChatMessageModel]:
+def get_thread_messages(db: Session, thread_id: str) -> list[models.ChatMessageModel]:
     return (
         db.query(models.ChatMessageModel)
         .filter(models.ChatMessageModel.thread_id == thread_id)
@@ -65,7 +62,7 @@ def create_chat_message(
         .first()
     )
     if db_thread:
-        db_thread.updated_at = datetime.datetime.now(datetime.timezone.utc)
+        db_thread.updated_at = datetime.datetime.now(datetime.UTC)
 
     db.commit()
     db.refresh(db_msg)
@@ -83,4 +80,3 @@ def delete_thread(db: Session, thread_id: str) -> bool:
         db.commit()
         return True
     return False
-

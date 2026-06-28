@@ -1,6 +1,6 @@
-from collections.abc import AsyncIterable
 import json
-from typing import Any
+from collections.abc import AsyncIterable
+from typing import Annotated, Any
 from uuid import uuid4
 
 from deepagents import create_deep_agent
@@ -212,17 +212,17 @@ async def stream_chat(payload: ChatPayload) -> AsyncIterable[ServerSentEvent]:
 
 
 @app.get("/users/{user_id}/threads", response_model=list[schemas.ThreadResponse])
-def read_user_threads(user_id: str, db: Session = Depends(get_db)):
+def read_user_threads(user_id: str, db: Annotated[Session, Depends(get_db)]):
     return crud.get_user_threads(db, user_id=user_id)
 
 
 @app.get("/threads/{thread_id}/messages", response_model=list[schemas.MessageResponse])
-def read_thread_messages(thread_id: str, db: Session = Depends(get_db)):
+def read_thread_messages(thread_id: str, db: Annotated[Session, Depends(get_db)]):
     return crud.get_thread_messages(db, thread_id=thread_id)
 
 
 @app.delete("/threads/{thread_id}")
-def delete_thread_endpoint(thread_id: str, db: Session = Depends(get_db)):
+def delete_thread_endpoint(thread_id: str, db: Annotated[Session, Depends(get_db)]):
     success = crud.delete_thread(db, thread_id=thread_id)
     if not success:
         raise HTTPException(status_code=404, detail="Thread não encontrada")

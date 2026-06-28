@@ -1,5 +1,6 @@
 import datetime
-from sqlalchemy import Column, DateTime, ForeignKey, JSON, String, Text
+
+from sqlalchemy import JSON, Column, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import relationship
 
 from app.db.database import Base
@@ -11,13 +12,11 @@ class ChatThreadModel(Base):
     id = Column(String, primary_key=True, index=True)  # UUID / thread_id
     user_id = Column(String, index=True, nullable=False)
     title = Column(String, nullable=True, default="Nova Conversa")
-    created_at = Column(
-        DateTime, default=lambda: datetime.datetime.now(datetime.timezone.utc)
-    )
+    created_at = Column(DateTime, default=lambda: datetime.datetime.now(datetime.UTC))
     updated_at = Column(
         DateTime,
-        default=lambda: datetime.datetime.now(datetime.timezone.utc),
-        onupdate=lambda: datetime.datetime.now(datetime.timezone.utc),
+        default=lambda: datetime.datetime.now(datetime.UTC),
+        onupdate=lambda: datetime.datetime.now(datetime.UTC),
     )
 
     messages = relationship(
@@ -35,8 +34,6 @@ class ChatMessageModel(Base):
     role = Column(String, nullable=False)  # "user", "assistant", "system", "tool"
     content = Column(Text, nullable=False)
     metadata_info = Column(JSON, nullable=True)
-    created_at = Column(
-        DateTime, default=lambda: datetime.datetime.now(datetime.timezone.utc)
-    )
+    created_at = Column(DateTime, default=lambda: datetime.datetime.now(datetime.UTC))
 
     thread = relationship("ChatThreadModel", back_populates="messages")
