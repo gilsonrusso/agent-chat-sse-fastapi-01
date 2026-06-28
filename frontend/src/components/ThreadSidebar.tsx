@@ -20,6 +20,7 @@ import DialogContent from '@mui/material/DialogContent';
 import DialogContentText from '@mui/material/DialogContentText';
 import DialogActions from '@mui/material/DialogActions';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import appConfig from '../config/appConfig';
 
 export interface ThreadItem {
   id: string;
@@ -55,13 +56,11 @@ export const ThreadSidebar: React.FC<ThreadSidebarProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [threadToDelete, setThreadToDelete] = useState<ThreadItem | null>(null);
 
-  const baseUrl = apiUrl.replace(/\/chat\/stream$/, '');
-
   const fetchThreads = useCallback(async (showLoading = false) => {
     if (showLoading) setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${baseUrl}/users/default_user/threads`);
+      const res = await fetch(appConfig.endpoints.userThreads());
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       }
@@ -72,11 +71,11 @@ export const ThreadSidebar: React.FC<ThreadSidebarProps> = ({
     } finally {
       if (showLoading) setLoading(false);
     }
-  }, [baseUrl]);
+  }, []);
 
   const handleDeleteThread = async (threadIdToDelete: string) => {
     try {
-      const res = await fetch(`${baseUrl}/threads/${threadIdToDelete}`, {
+      const res = await fetch(appConfig.endpoints.deleteThread(threadIdToDelete), {
         method: 'DELETE',
       });
       if (!res.ok) {

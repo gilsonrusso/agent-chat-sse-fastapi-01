@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from "react";
 import { v7 as uuidv7 } from "uuid";
+import appConfig from "../config/appConfig";
 
 export interface ChatMessage {
   id: string;
@@ -101,7 +102,7 @@ function parseSSELines(raw: string): Array<{ event: string; data: string }> {
 }
 
 export function useSSEChat(options: UseSSEChatOptions = {}): UseSSEChatReturn {
-  const { apiUrl = "http://localhost:8000/chat/stream" } = options;
+  const { apiUrl = appConfig.endpoints.chatStream } = options;
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -301,8 +302,7 @@ export function useSSEChat(options: UseSSEChatOptions = {}): UseSSEChatReturn {
       setPendingInterrupt(null);
       setActiveTools([]);
       try {
-        const baseUrl = apiUrl.replace(/\/chat\/stream$/, "");
-        const res = await fetch(`${baseUrl}/threads/${selectedThreadId}/messages`);
+        const res = await fetch(appConfig.endpoints.threadMessages(selectedThreadId));
         if (!res.ok) {
           throw new Error(`HTTP ${res.status}: ${res.statusText}`);
         }
@@ -321,7 +321,7 @@ export function useSSEChat(options: UseSSEChatOptions = {}): UseSSEChatReturn {
         setError(errorMsg);
       }
     },
-    [apiUrl, isStreaming]
+    [isStreaming]
   );
 
   const abort = useCallback(() => {
