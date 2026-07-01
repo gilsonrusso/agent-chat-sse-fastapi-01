@@ -9,7 +9,7 @@ Esta skill apresenta os padrões de desenvolvimento, organização de código e 
 Siga uma arquitetura limpa modularizada por recursos (*domain-driven* ou por camadas claras):
 
 ```text
-backend/app/
+agent-service/app/
 ├── core/            # Configurações globais, segurança, variáveis de ambiente (Pydantic Settings)
 ├── db/              # Conexão com banco de dados, modelos ORM e schemas Pydantic
 ├── api/             # Routers e endpoints da API divididos por versão/módulo

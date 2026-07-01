@@ -3,7 +3,7 @@ import logging
 from rich.logging import RichHandler
 
 
-def setup_logger(name: str = "backend"):
+def setup_logger(name: str = "agent-service"):
     """Configura um logger estruturado e visualmente amigável."""
     logging.basicConfig(
         level=logging.INFO,

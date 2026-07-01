@@ -1,5 +1,6 @@
 import json
 from collections.abc import AsyncIterable
+from contextlib import asynccontextmanager
 from typing import Annotated, Any
 from uuid import uuid4
 
@@ -8,29 +9,31 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from langchain.tools import tool
-from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.types import Command
+from psycopg_pool import AsyncConnectionPool
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.llm import get_llm
 from app.core.logger import logger
 from app.db import crud, schemas
 from app.db.database import Base, SessionLocal, engine
 from app.db.deps import get_db
 
-# Criar tabelas no banco de dados na inicialização
-Base.metadata.create_all(bind=engine)
+# --- Pool de Conexões para o LangGraph ---
 
-app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+connection_pool = AsyncConnectionPool(
+    conninfo=settings.DATABASE_URL,
+    max_size=10,
+    kwargs={"autocommit": True},
+    open=False,
 )
+
+# O agente e o checkpointer serão inicializados dentro do ciclo de vida (lifespan)
+# para garantir que o event loop do asyncio esteja rodando.
+agent = None
 
 
 # --- Tools ---
@@ -60,18 +63,51 @@ def notify_email(to: str, subject: str, body: str) -> str:
     return f"Sent email to {to}"
 
 
-# --- Agent ---
+# --- Event LifeCycle ---
 
-agent = create_deep_agent(
-    model=get_llm(),
-    tools=[get_weather, remove_file, fetch_file, notify_email],
-    name="Meu Agent",
-    interrupt_on={
-        "remove_file": True,  # Default: approve, edit, reject, respond
-        "fetch_file": False,  # No interrupts needed
-        "notify_email": {"allowed_decisions": ["approve", "reject"]},  # No editing
-    },
-    checkpointer=InMemorySaver(),
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global agent
+    logger.info("Starting up the server (Lifespan)")
+
+    # 1. Abrir o pool de conexões do checkpointer e criar as tabelas necessárias
+    await connection_pool.open()
+    checkpointer = AsyncPostgresSaver(connection_pool)
+    await checkpointer.setup()
+
+    # 2. Inicializar o agente agora que o event loop está ativo
+    agent = create_deep_agent(
+        model=get_llm(),
+        tools=[get_weather, remove_file, fetch_file, notify_email],
+        name="Meu Agent",
+        interrupt_on={
+            "remove_file": True,  # Default: approve, edit, reject, respond
+            "fetch_file": False,  # No interrupts needed
+            "notify_email": {"allowed_decisions": ["approve", "reject"]},  # No editing
+        },
+        checkpointer=checkpointer,
+    )
+
+    # 3. Criar tabelas da aplicação no banco de dados se não existirem
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    yield
+
+    logger.info("Shutting down the server (Lifespan)")
+    # 4. Fechar o pool de conexões com segurança
+    await connection_pool.close()
+
+
+app = FastAPI(lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -91,28 +127,14 @@ class ChatPayload(BaseModel):
     decisions: list[DecisionItem] | None = None
 
 
-# --- Event LifeCycle ---
-
-
-@app.on_event("startup")
-async def startup_event():
-    logger.info("Starting up the server")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    logger.info("Shutting down the server")
-
-
 # --- Routes ---
 
 
 @app.post("/chat/stream", response_class=EventSourceResponse)
 async def stream_chat(payload: ChatPayload) -> AsyncIterable[ServerSentEvent]:
     config = {"configurable": {"thread_id": payload.thread_id}}
-    db: Session = SessionLocal()
 
-    try:
+    async with SessionLocal() as db:
         yield ServerSentEvent(raw_data="[START]", event="lifecycle_start")
 
         # 1. Definir o input dependendo se é uma nova mensagem ou retoma de interrupção
@@ -128,13 +150,13 @@ async def stream_chat(payload: ChatPayload) -> AsyncIterable[ServerSentEvent]:
             title = (
                 payload.text[:30] + "..." if len(payload.text) > 30 else payload.text
             )
-            crud.get_or_create_thread(
+            await crud.get_or_create_thread(
                 db,
                 thread_id=payload.thread_id,
                 user_id=payload.user_id,
                 title=title,
             )
-            crud.create_chat_message(
+            await crud.create_chat_message(
                 db,
                 schemas.MessageCreate(
                     id=str(uuid4()),
@@ -188,7 +210,7 @@ async def stream_chat(payload: ChatPayload) -> AsyncIterable[ServerSentEvent]:
 
         # Persistir a resposta completa do assistente no banco
         if assistant_content:
-            crud.create_chat_message(
+            await crud.create_chat_message(
                 db,
                 schemas.MessageCreate(
                     id=str(uuid4()),
@@ -207,23 +229,25 @@ async def stream_chat(payload: ChatPayload) -> AsyncIterable[ServerSentEvent]:
             )
         else:
             yield ServerSentEvent(raw_data="[DONE]", event="lifecycle_end")
-    finally:
-        db.close()
 
 
 @app.get("/users/{user_id}/threads", response_model=list[schemas.ThreadResponse])
-def read_user_threads(user_id: str, db: Annotated[Session, Depends(get_db)]):
-    return crud.get_user_threads(db, user_id=user_id)
+async def read_user_threads(user_id: str, db: Annotated[AsyncSession, Depends(get_db)]):
+    return await crud.get_user_threads(db, user_id=user_id)
 
 
 @app.get("/threads/{thread_id}/messages", response_model=list[schemas.MessageResponse])
-def read_thread_messages(thread_id: str, db: Annotated[Session, Depends(get_db)]):
-    return crud.get_thread_messages(db, thread_id=thread_id)
+async def read_thread_messages(
+    thread_id: str, db: Annotated[AsyncSession, Depends(get_db)]
+):
+    return await crud.get_thread_messages(db, thread_id=thread_id)
 
 
 @app.delete("/threads/{thread_id}")
-def delete_thread_endpoint(thread_id: str, db: Annotated[Session, Depends(get_db)]):
-    success = crud.delete_thread(db, thread_id=thread_id)
+async def delete_thread_endpoint(
+    thread_id: str, db: Annotated[AsyncSession, Depends(get_db)]
+):
+    success = await crud.delete_thread(db, thread_id=thread_id)
     if not success:
         raise HTTPException(status_code=404, detail="Thread não encontrada")
     return {"status": "ok", "message": "Thread deletada com sucesso"}

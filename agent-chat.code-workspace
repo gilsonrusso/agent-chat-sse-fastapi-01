@@ -1,8 +1,8 @@
 {
   "folders": [
     {
-      "name": "Backend",
-      "path": "backend"
+      "name": "Agent Service",
+      "path": "agent-service"
     },
     {
       "name": "Frontend",
@@ -11,7 +11,7 @@
   ],
   "settings": {
     "editor.formatOnSave": true,
-    "python.defaultInterpreterPath": "${workspaceFolder:Backend}/.venv/bin/python",
+    "python.defaultInterpreterPath": "${workspaceFolder:Agent Service}/.venv/bin/python",
     "typescript.tsdk": "frontend/node_modules/typescript/lib"
   }
 }

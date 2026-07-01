@@ -6,17 +6,21 @@ from sqlalchemy.orm import relationship
 from app.db.database import Base
 
 
+def utc_now_naive():
+    return datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
+
+
 class ChatThreadModel(Base):
     __tablename__ = "chat_threads"
 
     id = Column(String, primary_key=True, index=True)  # UUID / thread_id
     user_id = Column(String, index=True, nullable=False)
     title = Column(String, nullable=True, default="Nova Conversa")
-    created_at = Column(DateTime, default=lambda: datetime.datetime.now(datetime.UTC))
+    created_at = Column(DateTime, default=utc_now_naive)
     updated_at = Column(
         DateTime,
-        default=lambda: datetime.datetime.now(datetime.UTC),
-        onupdate=lambda: datetime.datetime.now(datetime.UTC),
+        default=utc_now_naive,
+        onupdate=utc_now_naive,
     )
 
     messages = relationship(
@@ -34,6 +38,6 @@ class ChatMessageModel(Base):
     role = Column(String, nullable=False)  # "user", "assistant", "system", "tool"
     content = Column(Text, nullable=False)
     metadata_info = Column(JSON, nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.datetime.now(datetime.UTC))
+    created_at = Column(DateTime, default=utc_now_naive)
 
     thread = relationship("ChatThreadModel", back_populates="messages")
