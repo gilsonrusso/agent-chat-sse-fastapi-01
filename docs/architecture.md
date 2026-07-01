@@ -1,36 +1,77 @@
-# Arquitetura do Sistema e Fluxo de Decisões (HITL)
+# Arquitetura do Sistema, Multi-Agentes (MCP) e Fluxo de Decisões (HITL)
 
-Este documento detalha o funcionamento interno, as escolhas de design arquitetural e o fluxo de dados entre o **Frontend** (React), o **Backend** (FastAPI/LangGraph) e o **Banco de Dados** (PostgreSQL).
+Este documento detalha o funcionamento interno, as escolhas de design arquitetural, o registro de ferramentas via **Model Context Protocol (MCP)** e o fluxo de dados entre os componentes do ecossistema.
 
 ---
 
-## 🗺️ Fluxo de Dados Global
+## 🗺️ Mapa de Serviços e Portas
 
-O sistema opera de forma totalmente orientada a eventos e conexões assíncronas. Abaixo está o fluxo simplificado de uma requisição de chat que engatilha uma tomada de decisão por parte do usuário (Human-in-the-Loop):
+O sistema é composto por 4 microsserviços distribuídos localmente:
+
+```
+┌────────────────────────────────────────────────────────┐
+│                   Frontend (Porta 5173)                │
+└───────────────────────────┬────────────────────────────┘
+                            │ (POST /chat/stream SSE)
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│            Agent Service (Porta 8000)                  │
+│  - Supervisor Agent (LangGraph)                        │
+│  - Subagente Produtos | Subagente Vendas               │
+└───────────┬───────────────────────────────┬────────────┘
+            │                               │
+            │ (Carrega Checkpoint/Msg)      │ (Descoberta & Chamada de Tools)
+            ▼                               ▼
+┌────────────────────────┐      ┌────────────────────────┐
+│  PostgreSQL (Porta 5432)│      │   MCP Server (Porta 8001)│
+│  - SQLAlchemy Tables   │      │  - FastMCP (from_openapi)
+│  - Checkpoint Tables   │      └───────────┬────────────┘
+└────────────────────────┘                  │
+                                            │ (Redirecionamento de Requests)
+                                            ▼
+                                ┌────────────────────────┐
+                                │   E-Commerce Backend   │
+                                │      (Porta 8002)      │
+                                │  - API Produtos/Vendas │
+                                └────────────────────────┘
+```
+
+---
+
+## 🔄 Fluxo de Execução com Subagentes e MCP
+
+Abaixo está o fluxo sequencial detalhado de uma requisição de chat na qual o Agente Supervisor delega tarefas para um subagente dinâmico obtido via MCP:
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor User as Usuário
     participant FE as Frontend (React/Vite)
-    participant BE as Backend (FastAPI/LangGraph)
-    participant DB as PostgreSQL (SQLAlchemy / Checkpointer)
+    participant BE as Agent Service (Porta 8000)
+    participant MCP as MCP Server (Porta 8001)
+    participant Ecom as E-Commerce Backend (Porta 8002)
+    participant DB as PostgreSQL (Porta 5432)
     
-    User->>FE: Envia mensagem "Deletar arquivo configs.json"
-    FE->>BE: POST /chat/stream {text: "Deletar configs.json", thread_id}
-    Note over BE: Abre sessão SQLAlchemy & inicia Agente
-    BE->>DB: Salva Thread e Mensagem (User) no Postgres
-    BE->>BE: Inicia astream_events()
-    Note over BE: Agente executa e intercepta a ferramenta remove_file
-    BE->>DB: Salva estado atual do Agente (Checkpoint)
-    BE->>FE: SSE Event: "interrupt" {tool: "remove_file", args: {path: "configs.json"}}
-    Note over FE: Renderiza painel de decisão (HITL)
-    User->>FE: Clica em "Aprovar"
-    FE->>BE: POST /chat/stream {decisions: [{type: "approve"}], thread_id}
-    Note over BE: Carrega Checkpoint do banco
-    BE->>BE: Retoma a execução via Command(resume)
-    BE->>BE: Executa remove_file("configs.json")
-    BE->>FE: SSE Event: "message" (Sucesso na exclusão...)
+    Note over BE: No startup, lifespan conecta no MCP Server (SSE)
+    BE->>MCP: GET /sse (Obtém ferramentas)
+    MCP-->>BE: Retorna list_products, list_sales, etc.
+    BE->>BE: Cria subagentes (products_agent, sales_agent) baseando-se em tags
+    
+    User->>FE: Pergunta "Quais produtos estão disponíveis?"
+    FE->>BE: POST /chat/stream {text: "Quais produtos estão disponíveis?", thread_id}
+    BE->>DB: Salva Thread e Mensagem do Usuário
+    
+    Note over BE: Supervisor recebe a mensagem
+    BE->>BE: Supervisor decide encaminhar para "products_agent"
+    
+    Note over BE: products_agent executa a tool list_products_products
+    BE->>MCP: POST /call_tool {name: "list_products_products", args: {}}
+    MCP->>Ecom: GET /products (Executa a rota real)
+    Ecom-->>MCP: Retorna [Laptop Pro, Mouse Sem Fio, Monitor 4K]
+    MCP-->>BE: Retorna dados estruturados em texto
+    
+    Note over BE: products_agent processa a resposta e responde ao Supervisor
+    BE->>FE: SSE Event: "message" (Os produtos no catálogo são...)
     BE->>DB: Salva resposta do Agente (Assistant)
     BE->>FE: SSE Event: "lifecycle_end" [DONE]
 ```
@@ -39,98 +80,32 @@ sequenceDiagram
 
 ## 1. Arquitetura do Frontend (React)
 
-O frontend foi arquitetado para ser uma SPA leve, focada em reatividade de fluxo contínuo.
-
-### Custom Hook: `useSSEChat`
-A conexão com o endpoint de streaming `/chat/stream` é gerenciada através de um hook personalizado. Devido à necessidade de enviar payloads complexos contendo payloads de decisões (HITL), utilizamos requisições `POST` tradicionais em vez de `EventSource` (que suporta apenas `GET`).
-* **Consumo de Streams**: É feito utilizando a API nativa `fetch` lendo o corpo da resposta (`response.body.getReader()`) e decodificando os chunks binários em texto utilizando o `TextDecoder`.
-* **Parsing de Eventos**: Os chunks do stream SSE chegam no formato padrão:
-  ```text
-  event: message
-  data: Conteúdo do token
-  ```
-  O hook separa os eventos (`lifecycle_start`, `message`, `tool_start`, `tool_end`, `interrupt`, `error`, `lifecycle_end`) e atualiza o estado da interface.
-
-### Painel de Decisões (Human-in-the-Loop UI)
-Quando um evento do tipo `interrupt` é disparado, a interface renderiza uma caixa de diálogo dedicada contendo:
-* **Edição JSON**: O usuário pode visualizar e editar inline os parâmetros que serão enviados para a ferramenta (ex: alterar o caminho do arquivo).
-* **Decisões Possíveis**:
-  * **Approve (Aprovar)**: Prossegue a execução com os argumentos originais ou editados.
-  * **Reject (Rejeitar)**: Cancela a execução. O usuário pode preencher um campo de feedback que é enviado ao agente.
-  * **Respond (Responder)**: Envia uma mensagem direta de texto de volta ao agente para orientá-lo sem prosseguir com a ferramenta.
+O frontend foi arquitetado para ser uma SPA reativa baseada no React 19:
+* **Custom Hook: `useSSEChat`**: Consome respostas estruturadas de streaming caractere por caractere via `POST /chat/stream` usando a API `fetch` nativa e leitores de stream (`response.body.getReader()`).
+* **Painel de Decisões (HITL UI)**: Intercepta eventos `interrupt` do servidor e renderiza uma interface onde o usuário visualiza e pode editar inline argumentos em JSON antes de tomar uma decisão de **Aprovação**, **Rejeição** ou **Resposta**.
 
 ---
 
-## 2. Arquitetura do Backend (FastAPI + LangGraph)
+## 2. Orquestração e Multi-Agentes (Agent Service)
 
-O backend é assíncrono e centrado em threads sem bloqueio do event loop.
-
-### FastAPI Lifespan Manager
-A inicialização de conexões e pool com o banco de dados é centralizada no `lifespan`:
-1. **psycopg pool**: Inicializa o pool de conexões assíncronas do PostgreSQL.
-2. **LangGraph Setup**: Executa o `checkpointer.setup()` para criar as tabelas de checkpoint se não existirem.
-3. **Lazy Compilation**: Compila o grafo do Agente (`create_deep_agent`) apenas após o event loop do `asyncio` estar ativo, evitando problemas de inicialização de concorrência.
-4. **SQLAlchemy Models**: Sincroniza e cria as tabelas de dados de mensagens de forma assíncrona.
+O backend de inteligência é orquestrado de forma descentralizada pelo LangGraph:
+* **Supervisor**: Atua como o cérebro centralizador. Ele interage diretamente com o usuário e decide se a solicitação deve ser resolvida por ele mesmo usando ferramentas nativas (ex: e-mail, tempo, arquivos) ou delegada aos subagentes especialistas.
+* **Subagentes de Domínio**: São criados de forma dinâmica no startup da aplicação com base nas ferramentas importadas do servidor MCP:
+  * **`products_agent`**: Assume todas as ferramentas MCP cujo nome contenha `products`. Especializa-se em catálogo de itens, preços e buscas por ID.
+  * **`sales_agent`**: Assume todas as ferramentas MCP cujo nome contenha `sales`. Especializa-se em faturamento, volumes e auditoria de transações.
 
 ---
 
-## 3. Estrutura de Persistência no PostgreSQL
+## 3. Servidor de Ferramentas MCP (FastMCP)
 
-O banco de dados PostgreSQL é a fonte central de verdade do sistema, dividindo-se em duas camadas lógicas de persistência:
-
-```
-                  ┌─────────────────────────────────┐
-                  │      Banco de Dados Postgres    │
-                  └────────────────┬────────────────┘
-                                   │
-         ┌─────────────────────────┴─────────────────────────┐
-         ▼                                                   ▼
-┌──────────────────────────────────┐       ┌──────────────────────────────────┐
-│      Mensagens e Histórico       │       │       Checkpoints do Agente      │
-│      (SQLAlchemy Async)          │       │      (AsyncPostgresSaver)        │
-├──────────────────────────────────┤       ├──────────────────────────────────┤
-│ - chat_threads                   │       │ - checkpoint_migrations          │
-│ - chat_messages                  │       │ - checkpoints                    │
-│                                  │       │ - checkpoint_blobs               │
-│                                  │       │ - checkpoint_writes              │
-└──────────────────────────────────┘       └──────────────────────────────────┘
-```
-
-### Layer A: Persistência de Mensagens da Aplicação (SQLAlchemy)
-Gerenciado por modelos ORM síncronos no Python, mapeados para operações assíncronas no banco:
-* **`chat_threads`**: Armazena as sessões de conversas (`id`, `user_id`, `title`, `created_at`, `updated_at`).
-* **`chat_messages`**: Armazena as mensagens reais enviadas (`id`, `thread_id`, `role`, `content`, `metadata_info`, `created_at`).
-
-> [!IMPORTANT]
-> **Compatibilidade Timezone-Naive (asyncpg)**: 
-> O driver `asyncpg` exige correspondência exata para colunas do tipo `TIMESTAMP WITHOUT TIME ZONE`. O sistema utiliza o helper `utc_now_naive()` para remover a informação de fuso horário (`tzinfo=None`) das instâncias de data/hora antes da escrita, evitando falhas de serialização.
->
-> **Eager Loading (`selectinload`)**: 
-> Para evitar erros de carregamento sob demanda (`MissingGreenlet`) em rotas assíncronas do FastAPI, a consulta de listagem de threads carrega ansiosamente as mensagens associadas utilizando a opção `.options(selectinload(models.ChatThreadModel.messages))`.
-
-### Layer B: Memória de Checkpoints do Agente (LangGraph)
-Gerenciado nativamente pelo `AsyncPostgresSaver` conectado através do `AsyncConnectionPool`:
-* **Como funciona**: O LangGraph serializa todo o estado interno da execução (o histórico interno do modelo, variáveis de estado e o ponto em que o grafo está pausado) e salva nas tabelas `checkpoints` e `checkpoint_blobs`.
-* **Retomada de estado**: Quando a requisição envia uma decisão de HITL, o backend busca o estado correspondente usando a chave `configurable: {thread_id}` e retoma a execução exatamente do nó suspenso, sem perder nenhuma variável ou contexto.
+O servidor MCP centraliza o acesso ao microsserviço de e-commerce e implementa as seguintes melhores práticas:
+* **Zero DRY (from_openapi)**: Não há declaração redundante de parâmetros. O FastMCP lê o schema JSON gerado pelo FastAPI do e-commerce (`http://localhost:8002/openapi.json`) e constrói dinamicamente as assinaturas das ferramentas.
+* **Resiliência de Inicialização**: O servidor MCP possui um mecanismo de *polling* que tenta recuperar a documentação via HTTP por até 5 segundos durante a inicialização, utilizando um schema OpenAPI vazio de fallback para evitar que o servidor sofra crash caso o backend do e-commerce ainda não tenha iniciado.
 
 ---
 
-## 4. Fluxo Detalhado de Tomada de Decisão (HITL)
+## 4. Estrutura de Persistência no PostgreSQL
 
-O ciclo de vida de uma interrupção segue os seguintes passos lógicos:
-
-1. **Definição da Ferramenta**: No arquivo [main.py](file:///mnt/c0b6217c-c2f3-4c1f-8ba2-c8d177f718a9/development/personal/agent-chat-sse-fastapi-01/agent-service/app/main.py), definimos quais ferramentas exigem interrupção:
-   ```python
-   interrupt_on={
-       "remove_file": True, # Pausa e exige decisão com opções (approve/reject/edit)
-       "notify_email": {"allowed_decisions": ["approve", "reject"]} # Pausa sem permissão de edição
-   }
-   ```
-2. **Pausa do Agente**: Quando o LLM escolhe chamar a ferramenta `remove_file`, o motor do LangGraph interrompe o processamento logo antes da chamada e salva o checkpoint atual.
-3. **Disparo do Evento**: O endpoint `/chat/stream` verifica a interrupção através de `agent.aget_state(config)`. Havendo uma interrupção ativa, dispara um evento SSE `interrupt` contendo a ação que o agente gostaria de realizar e encerra a conexão HTTP de streaming.
-4. **Interação do Usuário**: O frontend renderiza o painel e captura a decisão do usuário.
-5. **Retomada**: O frontend faz uma nova requisição `POST` contendo as decisões tomadas. O backend carrega o checkpoint da thread do Postgres e injeta a decisão usando:
-   ```python
-   inputs = Command(resume={"decisions": decisions_list})
-   ```
-   O agente então executa a ferramenta de acordo com o veredito recebido e finaliza o processamento.
+O banco de dados armazena os dados da aplicação e o estado de concorrência das decisões:
+* **Camada SQLAlchemy**: Controla de forma assíncrona (`AsyncSession` + `asyncpg`) as tabelas de threads e mensagens, utilizando `selectinload` para evitar exceções de concorrência e `utc_now_naive()` para compatibilidade de timezones com o driver.
+* **Camada LangGraph (AsyncPostgresSaver)**: Utiliza tabelas de persistência nativas para armazenar blobs binários e checkpoints do grafo, permitindo pausar e retomar fluxos complexos exatamente do ponto onde ocorreu a tomada de decisão (HITL).

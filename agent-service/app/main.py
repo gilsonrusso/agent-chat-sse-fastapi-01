@@ -7,6 +7,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from app.agents import init_agent
 from app.core.connections import connection_pool
 from app.core.logger import logger
+from app.core.mcp import mcp_manager
 from app.db.database import Base, engine
 from app.routes import router as api_router
 
@@ -15,23 +16,29 @@ from app.routes import router as api_router
 async def lifespan(app: FastAPI):
     logger.info("Starting up the server (Lifespan)")
 
-    # 1. Abrir o pool de conexões do checkpointer e criar as tabelas necessárias
+    # 1. Conectar ao servidor MCP
+    await mcp_manager.connect()
+
+    # 2. Abrir o pool de conexões do checkpointer e criar as tabelas necessárias
     await connection_pool.open()
     checkpointer = AsyncPostgresSaver(connection_pool)
     await checkpointer.setup()
 
-    # 2. Inicializar e compilar o agente inteligente LangGraph
+    # 3. Inicializar e compilar o agente inteligente LangGraph
     init_agent(checkpointer)
 
-    # 3. Criar tabelas da aplicação no banco de dados se não existirem
+    # 4. Criar tabelas da aplicação no banco de dados se não existirem
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
     yield
 
     logger.info("Shutting down the server (Lifespan)")
-    # 4. Fechar o pool de conexões com segurança ao encerrar
+    # 5. Fechar o pool de conexões com segurança ao encerrar
     await connection_pool.close()
+
+    # 6. Desconectar do servidor MCP
+    await mcp_manager.disconnect()
 
 
 app = FastAPI(lifespan=lifespan)

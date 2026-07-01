@@ -19,5 +19,57 @@ services:
     ports:
       - "8080:8080"
 
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: agent_chat_backend
+    restart: always
+    ports:
+      - "8002:8002"
+
+  mcp:
+    build:
+      context: ./mcp
+      dockerfile: Dockerfile
+    container_name: agent_chat_mcp
+    restart: always
+    environment:
+      - BACKEND_URL=http://backend:8002
+    ports:
+      - "8001:8001"
+    depends_on:
+      - backend
+
+  agent-service:
+    build:
+      context: ./agent-service
+      dockerfile: Dockerfile
+    container_name: agent_chat_service
+    restart: always
+    environment:
+      - DATABASE_URL=postgresql://agent_user:agent_password@postgres:5432/agent_chat_db
+      - MCP_URL=http://mcp:8001/sse
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - mcp
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_URL=http://localhost:8000
+        - VITE_DEFAULT_USER_ID=default_user
+    container_name: agent_chat_frontend
+    restart: always
+    ports:
+      - "5173:80"
+    depends_on:
+      - agent-service
+
 volumes:
   postgres_data:
