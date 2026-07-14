@@ -4,7 +4,8 @@ import appConfig from "../config/appConfig";
 
 export interface ChatMessage {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "tool";
+  name?: string;
   content: string;
   timestamp: Date;
 }
@@ -220,13 +221,39 @@ export function useSSEChat(options: UseSSEChatOptions = {}): UseSSEChatReturn {
                 break;
 
               case "tool_end":
-                setActiveTools((prev) =>
-                  prev.map((t) =>
-                    t.name === sse.data && t.type === "start"
-                      ? { ...t, type: "end" }
-                      : t,
-                  ),
-                );
+                try {
+                  const toolName = sse.data;
+                  setActiveTools((prev) =>
+                    prev.map((t) =>
+                      t.name === toolName && t.type === "start"
+                        ? { ...t, type: "end" }
+                        : t,
+                    ),
+                  );
+                } catch (err) {
+                  console.error("Error handling tool_end:", err);
+                }
+                break;
+
+              case "component":
+                try {
+                  const compResult = JSON.parse(sse.data);
+                  const compName = compResult.component;
+                  const compData = compResult.data;
+
+                  setMessages((prev) => [
+                    ...prev,
+                    {
+                      id: generateId(),
+                      role: "tool",
+                      name: compName,
+                      content: typeof compData === "string" ? compData : JSON.stringify(compData),
+                      timestamp: new Date(),
+                    },
+                  ]);
+                } catch (err) {
+                  console.error("Error parsing component event:", err);
+                }
                 break;
 
               case "interrupt":
@@ -259,13 +286,14 @@ export function useSSEChat(options: UseSSEChatOptions = {}): UseSSEChatReturn {
           setError(errorMsg);
         }
 
-        // Remove empty assistant message on error or manual abort
-        setMessages((prev) =>
-          prev.filter((msg) => !(msg.id === assistantId && msg.content === "")),
-        );
+        // No cleanup here anymore, moved to finally
       } finally {
         setIsStreaming(false);
         abortControllerRef.current = null;
+        // Remove assistant message if it ended up empty or containing only whitespace
+        setMessages((prev) =>
+          prev.filter((msg) => !(msg.id === assistantId && msg.content.trim() === "")),
+        );
       }
     },
     [apiUrl, threadId]
@@ -310,7 +338,8 @@ export function useSSEChat(options: UseSSEChatOptions = {}): UseSSEChatReturn {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const loadedMessages: ChatMessage[] = data.map((msg: any) => ({
           id: msg.id,
-          role: msg.role as "user" | "assistant",
+          role: msg.role as "user" | "assistant" | "tool",
+          name: msg.name,
           content: msg.content,
           timestamp: new Date(msg.created_at),
         }));

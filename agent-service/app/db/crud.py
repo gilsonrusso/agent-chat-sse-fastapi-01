@@ -54,6 +54,7 @@ async def create_chat_message(
         id=message.id,
         thread_id=message.thread_id,
         role=message.role,
+        name=message.name,
         content=message.content,
         metadata_info=message.metadata_info,
     )

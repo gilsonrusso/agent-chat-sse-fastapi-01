@@ -36,6 +36,7 @@ class ChatMessageModel(Base):
         String, ForeignKey("chat_threads.id"), nullable=False, index=True
     )
     role = Column(String, nullable=False)  # "user", "assistant", "system", "tool"
+    name = Column(String, nullable=True)
     content = Column(Text, nullable=False)
     metadata_info = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=utc_now_naive)

@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict
 class MessageBase(BaseModel):
     role: str
     content: str
+    name: str | None = None
     metadata_info: dict[str, Any] | None = None
 
 
