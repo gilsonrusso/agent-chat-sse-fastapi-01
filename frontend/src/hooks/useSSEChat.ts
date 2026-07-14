@@ -236,6 +236,7 @@ export function useSSEChat(options: UseSSEChatOptions = {}): UseSSEChatReturn {
                 break;
 
               case "component":
+              case "layout":
                 try {
                   const compResult = JSON.parse(sse.data);
                   const compName = compResult.component;
@@ -252,7 +253,7 @@ export function useSSEChat(options: UseSSEChatOptions = {}): UseSSEChatReturn {
                     },
                   ]);
                 } catch (err) {
-                  console.error("Error parsing component event:", err);
+                  console.error("Error parsing component/layout event:", err);
                 }
                 break;
 

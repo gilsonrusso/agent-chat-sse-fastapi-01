@@ -52,40 +52,18 @@ class StreamFilter:
                     self.buffer = self.buffer[idx + 1 :]
                     self.in_tag = False
 
-                    if full_tag.startswith("[RENDER_UI:"):
+                    if full_tag.startswith("[RENDER_LAYOUT:"):
                         try:
-                            json_str = full_tag[11:-1].strip()
+                            json_str = full_tag[15:-1].strip()
                             tag_data = json.loads(json_str)
-                            comp_name = tag_data.get("component")
-                            args = tag_data.get("args", {})
-
-                            hydrated_data = None
-                            if comp_name == "ProductCatalog":
-                                from app.tools import PRODUCTS
-
-                                hydrated_data = PRODUCTS
-                            elif comp_name == "SalesDashboard":
-                                from app.tools import SALES_HISTORY
-
-                                t = args.get("type", "summary")
-                                if t == "summary":
-                                    total = sum(
-                                        sale["total_value"] for sale in SALES_HISTORY
-                                    )
-                                    hydrated_data = {
-                                        "total_revenue": total,
-                                        "total_sales_count": len(SALES_HISTORY),
-                                    }
-                                else:
-                                    hydrated_data = SALES_HISTORY
 
                             payload = {
-                                "component": comp_name,
-                                "data": hydrated_data,
+                                "component": "JsonUiRenderer",
+                                "data": tag_data,
                             }
-                            events.append(("component", json.dumps(payload)))
+                            events.append(("layout", json.dumps(payload)))
                         except Exception as e:
-                            logger.error(f"Erro ao processar RENDER_UI tag: {e}")
+                            logger.error(f"Erro ao processar RENDER_LAYOUT tag: {e}")
                     else:
                         events.append(("message", full_tag))
         return events
@@ -161,7 +139,7 @@ async def stream_chat(payload: ChatPayload) -> AsyncIterable[ServerSentEvent]:
                     for event_type, data in stream_filter.feed(chunk.content):
                         if event_type == "message":
                             assistant_content += data
-                        elif event_type == "component":
+                        elif event_type == "layout":
                             comp_payload = json.loads(data)
                             await crud.create_chat_message(
                                 db,

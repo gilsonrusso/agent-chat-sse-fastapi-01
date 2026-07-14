@@ -38,6 +38,7 @@ import PersonIcon from "@mui/icons-material/Person";
 import { HITLPanel } from "./HitlPanel";
 import ProductCatalog from "./ProductCatalog";
 import SalesDashboard from "./SalesDashboard";
+import JsonUiRenderer from "./JsonUiRenderer";
 
 const SUGGESTIONS = [
   { text: "Quais produtos você tem?", icon: <StoreIcon fontSize="small" /> },
@@ -289,7 +290,9 @@ export default function ChatComponent() {
 
                 {msg.role === "tool" ? (
                   <Box sx={{ width: "100%", pl: 6 }}>
-                    {msg.name === "list_products" || msg.name === "get_product" || msg.name === "ProductCatalog" ? (
+                    {msg.name === "JsonUiRenderer" ? (
+                      <JsonUiRenderer data={msg.content} />
+                    ) : msg.name === "list_products" || msg.name === "get_product" || msg.name === "ProductCatalog" ? (
                       <ProductCatalog data={msg.content} />
                     ) : msg.name === "list_sales" || msg.name === "get_sales_summary" || msg.name === "SalesDashboard" ? (
                       <SalesDashboard data={msg.content} />
